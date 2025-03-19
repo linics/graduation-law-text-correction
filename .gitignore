@@ -5,7 +5,6 @@ __pycache__/
 # Model checkpoints (大文件，忽略)
 macbert-error-detect/
 macbert-soft-masked/
-dataset/
 
 # Streamlit cache
 .streamlit/

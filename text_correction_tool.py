@@ -3,9 +3,9 @@
 import os
 import torch
 import numpy as np
-from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
-import Levenshtein
 import pypinyin
+import Levenshtein
+from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
 
 ################################################################################
 # 1. 全局加载或初始化
@@ -17,33 +17,31 @@ class TextCorrectionTool:
     """
 
     def __init__(self,
-                 detection_model_path="./macbert-error-detect/checkpoint-294",
-                 correction_model_path="./macbert-soft-masked/checkpoint-294",
-                 device="cuda"  # or "cpu"
-                 ):
-        """
-        初始化：加载检测模型、纠错模型
-        """
-        # 1) 加载错误检测模型
+                 detection_model_id="linics/detection-model",  # 你的检测模型ID
+                 correction_model_id="linics/correction-model",  # 你的纠错模型ID
+                 device="cuda"):
+        # 加载错误检测模型
         self.detection_tokenizer = AutoTokenizer.from_pretrained("hfl/chinese-macbert-base")
         self.detection_model = AutoModelForTokenClassification.from_pretrained(
-            detection_model_path, num_labels=2
+            detection_model_id,
+            num_labels=2
         )
-        if device == "cuda" and torch.cuda.is_available():
+        if device == "cuda":
             self.detection_model.to("cuda")
         self.detection_model.eval()
 
-        # 2) 加载纠错模型 (soft-masked)
-        self.correction_tokenizer = AutoTokenizer.from_pretrained(correction_model_path)
-        self.corrector = pipeline("fill-mask", model=correction_model_path, tokenizer=self.correction_tokenizer,
-                                  device=0 if device=="cuda" and torch.cuda.is_available() else -1)
+        # 加载纠错模型
+        self.correction_tokenizer = AutoTokenizer.from_pretrained(correction_model_id)
+        self.corrector = pipeline("fill-mask", model=correction_model_id, tokenizer=self.correction_tokenizer,
+                                  device=0 if device == "cuda" else -1)
 
     ################################################################################
     # 2. 检测相关
     ################################################################################
     def detect_errors_in_sentence(self, sentence, max_length=128):
         """
-        对单个句子进行错误检测，返回每个字符的预测标签列表（0表示正确，1表示错误）。
+        对单个句子进行错误检测，返回每个字符的预测标签列表（0 表示正确，1 表示错误）。
+        将输入句子按字符拆分，并利用检测模型预测每个字符的标签。
         """
         inputs = list(sentence)
         raw_tokenized = self.detection_tokenizer(
@@ -54,16 +52,20 @@ class TextCorrectionTool:
             max_length=max_length,
             return_tensors="pt"
         )
-        word_ids = raw_tokenized.word_ids(batch_index=0)  # 获取 word_ids
+        # 获取 tokenized 结果中每个 token 对应的 word_ids
+        word_ids = raw_tokenized.word_ids(batch_index=0)
 
+        # 将张量转移到模型所在设备
         device = next(self.detection_model.parameters()).device
         tokenized_input = {k: v.to(device) for k, v in raw_tokenized.items()}
 
         with torch.no_grad():
             outputs = self.detection_model(**tokenized_input)
         predictions = outputs.logits.detach().cpu().numpy()
+        # 对每个 token 选择得分最大的类别
         predictions = np.argmax(predictions, axis=2)[0]
 
+        # 对齐 word_ids，只保留每个单词第一个 token 的预测结果
         pred_labels = []
         previous_word_idx = None
         for word_idx, pred in zip(word_ids, predictions):
@@ -77,7 +79,7 @@ class TextCorrectionTool:
 
     def create_masked_text_from_predictions(self, sentence, pred_labels):
         """
-        根据预测标签，将预测为错误的位置替换为 [MASK]。
+        根据预测标签，将预测为错误的位置替换为 [MASK]，否则保留原字符。
         """
         masked_chars = []
         for char, label in zip(sentence, pred_labels):
@@ -96,7 +98,8 @@ class TextCorrectionTool:
 
     def compute_pinyin_similarity(self, candidate, target):
         """
-        计算候选词与目标词的拼音相似度。
+        计算候选词与目标词的拼音相似度：
+        如果拼音完全一致返回 1.0，否则根据编辑距离归一化相似度。
         """
         cand_pinyin = self.get_pinyin(candidate)
         target_pinyin = self.get_pinyin(target)
@@ -107,13 +110,17 @@ class TextCorrectionTool:
         return sim
 
     def compute_shape_similarity(self, candidate, target):
-        """简单示例：若候选词与目标词完全一致返回1.0，否则0.5。"""
+        """
+        简单示例：若候选词与目标词完全一致返回 1.0，否则返回 0.5。
+        """
         return 1.0 if candidate == target else 0.5
 
     def get_all_candidate_scores(self, candidate_list, target, alpha=0.7, beta=0.3, gamma=0.3):
         """
         对候选列表计算综合得分：
-          综合得分 = alpha * 模型得分 + beta * 拼音相似度 + gamma * 字形相似度
+          综合得分 = alpha * 模型得分 + beta * 拼音相似度 + gamma * 字形相似度。
+        返回排序后的候选列表，每个元素为一个元组：
+        (候选词, 综合得分, 模型得分, 拼音相似度, 字形相似度)
         """
         results = []
         for cand in candidate_list:
@@ -125,11 +132,16 @@ class TextCorrectionTool:
         results.sort(key=lambda x: x[1], reverse=True)
         return results
 
-    def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=0.7, beta=0.3, gamma=0.3):
+    def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=0.7, beta=0.3, gamma=0.3, debug=False):
         """
-        迭代纠错：对 masked_text 不断填充 [MASK]，直到无 [MASK] 或达到 max_iters。
+        迭代纠错：对 masked_text 不断填充 [MASK]，直到文本中不再包含 [MASK] 或达到最大迭代次数。
+        如果 debug=True，则同时返回每一步的候选词列表。
+        返回：
+          - 如果 debug 为 False，返回最终纠错后的文本；
+          - 如果 debug 为 True，返回 (corrected_sentence, predictions_list)。
         """
         corrected_sentence = masked_text
+        predictions_list = []  # 用于保存每次迭代的候选词及分数信息
         iters = 0
         while "[MASK]" in corrected_sentence and iters < max_iters:
             try:
@@ -139,26 +151,29 @@ class TextCorrectionTool:
                 target_char = target_text[mask_index] if mask_index < len(target_text) else ""
                 candidates_with_scores = self.get_all_candidate_scores(candidate_list, target_char,
                                                                        alpha=alpha, beta=beta, gamma=gamma)
+                if debug:
+                    predictions_list.append(candidates_with_scores)
                 top_candidate = candidates_with_scores[0][0]
                 corrected_sentence = corrected_sentence.replace("[MASK]", top_candidate, 1)
             except Exception as e:
                 print("fill-mask 出错:", e)
                 break
             iters += 1
-        return corrected_sentence
+        if debug:
+            return corrected_sentence, predictions_list
+        else:
+            return corrected_sentence
 
     ################################################################################
     # 4. 对外暴露的核心接口
     ################################################################################
     def correct_text(self, sentence, alpha=0.7, beta=0.3, gamma=0.3):
         """
-        综合接口：先检测错误位置 → 生成 masked_text → 迭代纠错 → 返回纠错后文本
+        综合接口：先对输入句子进行错误检测 → 生成 masked 文本 → 迭代纠错，
+        返回最终纠错后的句子。
         """
-        # 1. 检测
         pred_labels = self.detect_errors_in_sentence(sentence)
-        # 2. 生成 mask
         masked_text = self.create_masked_text_from_predictions(sentence, pred_labels)
-        # 3. 纠错
         corrected_sentence = self.iterative_correction(masked_text, sentence,
                                                        alpha=alpha, beta=beta, gamma=gamma)
         return corrected_sentence
