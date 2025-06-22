@@ -145,19 +145,27 @@ cfg = get_all()
 alpha_init = float(cfg.get('alpha', 0.4))
 beta_init = float(cfg.get('beta', 0.4))
 gamma_init = float(cfg.get('gamma', 0.1))
+legal_only_init = cfg.get('legal_only', 'False') == 'True'
+debug_init = cfg.get('debug_mode', 'False') == 'True'
 # 在侧边栏放置纠错参数
 st.sidebar.header("纠错参数设置")
 alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, alpha_init, 0.05)
 beta  = st.sidebar.slider("Beta (拼音相似度权重)", 0.0, 1.0, beta_init, 0.05)
 gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, gamma_init, 0.05)
-legal_only = st.sidebar.checkbox("仅限法律术语", value=False)
-debug_mode = st.sidebar.checkbox("显示候选词细节", value=False)
+legal_only = st.sidebar.checkbox("仅限法律术语", value=legal_only_init)
+debug_mode = st.sidebar.checkbox("显示候选词细节", value=debug_init)
 if st.sidebar.button("保存参数"):
     save_kv('alpha', str(alpha))
     save_kv('beta', str(beta))
     save_kv('gamma', str(gamma))
+    save_kv('legal_only', str(legal_only))
+    save_kv('debug_mode', str(debug_mode))
     st.sidebar.success("已保存")
-st.sidebar.info("调节纠错时模型得分、拼音相似度、字形相似度的权重；\n勾选 '显示候选词细节' 以查看每次迭代替换时的候选词。")
+st.sidebar.info(
+    "调节纠错时模型得分、拼音相似度、字形相似度的权重；\n" \
+    "勾选 '显示候选词细节' 以查看每次迭代替换时的候选词；\n" \
+    "勾选 '仅限法律术语' 时仅保留术语表中的候选。分支序列中的 '精确' 表示命中术语，'通用' 表示回退到普通候选。"
+)
 
 tab_single, tab_batch = st.tabs(["单句纠错", "批量纠错"])
 
@@ -213,7 +221,7 @@ with tab_single:
             edit_dist = Levenshtein.distance(corrected_text, input_text)
             st.write(f"**编辑距离：** {edit_dist}")
             branch_str = " -> ".join(branch_history)
-            st.write(f"**分支序列：** {branch_str}")
+            st.write(f"**分支序列：** {branch_str} (精确=命中术语, 通用=普通候选)")
 
             if debug_mode:
                 with st.expander("查看候选词细节"):
@@ -289,7 +297,7 @@ with tab_batch:
                     st.markdown(f"<div style='font-size:1.0rem;margin-top:4px;'>{highlighted}</div>", unsafe_allow_html=True)
                     st.write(f"编辑距离：{dist}")
                     branch_str = " -> ".join(branches)
-                    st.write(f"分支序列：{branch_str}")
+                    st.write(f"分支序列：{branch_str} (精确=命中术语, 通用=普通候选)")
                     st.write("---")
 
                 # 绘制编辑距离直方图
