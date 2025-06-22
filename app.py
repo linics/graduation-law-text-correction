@@ -5,22 +5,14 @@ import re
 from difflib import SequenceMatcher
 import matplotlib
 import matplotlib.pyplot as plt
-import pandas as pd
 import time
 
 from text_correction_tool import TextCorrectionTool
 # >>> 新增导入
-from auth_utils import (
-    init_db,
-    register,
-    verify,
-    insert_log,
-    load_config,
-    save_config,
-    get_logs,
-    count_logs,
-    export_all_logs,
-)
+from services.db import init_db
+from services.auth import register, verify, log_action, check_and_inc_quota
+from services.kv_config import get_all, save as save_kv
+from services.correction import save_correction
 
 def rerun():
     """兼容不同版本的 Streamlit 重新运行函数"""
@@ -117,7 +109,7 @@ if st.session_state["user"] is None:
             if ok:
                 st.session_state["user"] = lu
                 st.session_state["role"] = role
-                insert_log(lu, "login", "")
+                log_action(lu, "login", "")
                 rerun()
 
             else:
@@ -142,13 +134,13 @@ st.write("本系统基于错误检测与纠错模型，实现了文本纠错功�
 # >>> 显示用户信息与加载配置
 st.sidebar.markdown(f"**用户:** {st.session_state['user']} ({st.session_state['role']})")
 if st.sidebar.button("退出登录"):
-    insert_log(st.session_state['user'], 'logout', '')
+    log_action(st.session_state['user'], 'logout', '')
     st.session_state['user'] = None
     st.session_state['role'] = None
     rerun()
 
 
-cfg = load_config()
+cfg = {k: float(v) for k, v in get_all().items() if k in {'alpha','beta','gamma'}}
 # 在侧边栏放置纠错参数
 st.sidebar.header("纠错参数设置")
 alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, cfg['alpha'], 0.05)
@@ -157,25 +149,27 @@ gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, cfg['gamma'
 legal_only = st.sidebar.checkbox("仅限法律术语", value=False)
 debug_mode = st.sidebar.checkbox("显示候选词细节", value=False)
 if st.sidebar.button("保存参数"):
-    save_config(alpha, beta, gamma)
+    save_kv('alpha', str(alpha))
+    save_kv('beta', str(beta))
+    save_kv('gamma', str(gamma))
     st.sidebar.success("已保存")
 st.sidebar.info("调节纠错时模型得分、拼音相似度、字形相似度的权重；\n勾选 '显示候选词细节' 以查看每次迭代替换时的候选词。")
 
-if st.session_state["role"] == "admin":
-    tab_single, tab_batch, tab_logs = st.tabs(["单句纠错", "批量纠错", "日志管理"])
-else:
-    tab_single, tab_batch = st.tabs(["单句纠错", "批量纠错"])
-    tab_logs = None
+tab_single, tab_batch = st.tabs(["单句纠错", "批量纠错"])
 
 # ===============================
 # 4. 单句纠错
 # ===============================
 with tab_single:
-    input_text = st.text_area("请输入待纠错的中文句子：", height=120)
+    default_text = st.session_state.pop('input_text', '')
+    input_text = st.text_area("请输入待纠错的中文句子：", value=default_text, height=120)
     if st.button("开始纠错", key="single_correct"):
         if not input_text.strip():
             st.warning("请输入文本内容。")
         else:
+            if not check_and_inc_quota(st.session_state['user']):
+                st.error("已超出今日请求配额")
+                st.stop()
             with st.spinner("纠错中，请稍候..."):
                 start_time = time.time()
                 # 1. 检测
@@ -196,7 +190,7 @@ with tab_single:
                     corrected_text, matched_terms, branch_history = result
                 duration = time.time() - start_time
 
-            insert_log(st.session_state['user'], 'single_correct', input_text)
+            log_action(st.session_state['user'], 'single_correct', input_text)
             st.subheader("纠错结果")
             col1, col2 = st.columns(2)
             with col1:
@@ -229,6 +223,8 @@ with tab_single:
                                 f"- {token_str} | 综合: {combined:.3f}, 模型: {model_score:.3f}, 拼音: {pinyin_sim:.3f}, 字形: {shape_sim:.3f} | 术语: {info}"
                             )
 
+            save_correction(st.session_state['user'], input_text, corrected_text, 'v1')
+
 # ===============================
 # 5. 批量纠错
 # ===============================
@@ -258,6 +254,9 @@ with tab_batch:
                 edit_dists = []
                 start_time = time.time()
                 for idx, sent in enumerate(sentences, start=1):
+                    if not check_and_inc_quota(st.session_state['user']):
+                        st.warning("配额不足，剩余句子未处理")
+                        break
                     pred_labels = tool.detect_errors_in_sentence(sent)
                     masked_text = tool.create_masked_text_from_predictions(sent, pred_labels)
                     corrected_line, matched_terms_line, branch_hist_line = tool.iterative_correction(
@@ -267,13 +266,14 @@ with tab_batch:
                         debug=False,
                         legal_only=legal_only
                     )
+                    save_correction(st.session_state['user'], sent, corrected_line, 'v1')
                     dist = Levenshtein.distance(corrected_line, sent)
                     results.append((sent, corrected_line, dist, matched_terms_line, branch_hist_line))
                     edit_dists.append(dist)
                     progress_bar.progress(idx/total)
                 progress_bar.empty()
                 duration = time.time() - start_time
-                insert_log(st.session_state['user'], 'batch_correct', str(len(sentences)))
+                log_action(st.session_state['user'], 'batch_correct', str(len(sentences)))
 
                 st.subheader("批量纠错结果")
                 st.write(f"处理总句数：{len(results)}，耗时：{duration:.2f} 秒")
@@ -298,22 +298,5 @@ with tab_batch:
                 ax.set_ylabel("句子数量")
                 st.pyplot(fig, use_container_width=False)
 
-# >>> 日志管理页面
-if tab_logs:
-    st.subheader("操作日志")
-    total = count_logs()
-    page_size = 20
-    page = st.number_input("页码", min_value=1, value=1, step=1)
-    offset = (page - 1) * page_size
-    logs = get_logs(offset, page_size)
-    df = pd.DataFrame(logs, columns=["id", "user", "action", "payload", "timestamp"])
-    st.dataframe(df)
-    csv_page = df.to_csv(index=False).encode("utf-8")
-    st.download_button("导出当前页", csv_page, "logs_page.csv", "text/csv")
-    all_logs = export_all_logs()
-    df_all = pd.DataFrame(all_logs, columns=["id", "user", "action", "payload", "timestamp"])
-    csv_all = df_all.to_csv(index=False).encode("utf-8")
-    st.download_button("导出全部", csv_all, "logs_all.csv", "text/csv")
-    st.write(f"总记录数: {total}")
-# <<<
+
 

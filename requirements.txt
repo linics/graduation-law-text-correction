@@ -8,3 +8,5 @@ cnradical
 sklearn
 pandas
 passlib
+schedule
+sqlmodel
