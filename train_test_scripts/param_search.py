@@ -35,7 +35,7 @@ def evaluate_params(validation_data, tool, alpha, beta, gamma):
         pred_labels = tool.detect_errors_in_sentence(input_text)
         masked_text = tool.create_masked_text_from_predictions(input_text, pred_labels)
 
-        corrected_text, _, _ = tool.iterative_correction(
+        corrected_text, _, _, _ = tool.iterative_correction(
             masked_text, input_text,
             max_iters=10,
             alpha=alpha, beta=beta, gamma=gamma,

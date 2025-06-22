@@ -102,7 +102,7 @@ class TextCorrectionTool:
     # 3. 纠错相关
     ################################################################################
 
-    def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=None, beta=None, gamma=None, debug=False):
+    def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=None, beta=None, gamma=None, debug=False, legal_only=False):
         """
         迭代纠错：对 ``masked_text`` 不断填充 ``[MASK]``，直到文本中不再包含 ``[MASK]``
         或达到 ``max_iters`` 次。
@@ -110,12 +110,15 @@ class TextCorrectionTool:
         每次生成候选词后，会通过 ``term_filter.filter_candidates`` 校验其是否合法
         术语，只有被标记为合法的候选才参与后续打分与替换。
 
+        ``legal_only=True`` 时将强制仅在术语词表命中的候选中选择，若无命中则回填
+        原字符，不进入 General Branch。
+
         如果 ``debug=True``，则返回候选词得分列表，前端可用于展示；同时暴露替换
-        时匹配到的术语，便于高亮显示。
+        时匹配到的术语及分支信息，便于高亮显示。
 
         返回值：
-          - debug=False  -> ``(corrected_sentence, matched_terms)``
-          - debug=True   -> ``(corrected_sentence, predictions_list, matched_terms)``
+          - debug=False  -> ``(corrected_sentence, matched_terms, branch_history)``
+          - debug=True   -> ``(corrected_sentence, predictions_list, matched_terms, branch_history)``
         """
         alpha = self.default_alpha if alpha is None else alpha
         beta = self.default_beta if beta is None else beta
@@ -124,6 +127,7 @@ class TextCorrectionTool:
         corrected_sentence = masked_text
         predictions_list = []  # 用于保存每次迭代的候选词及分数信息
         matched_terms = []      # 每次替换命中的术语
+        branch_history = []     # 记录每次迭代走的分支
         iters = 0
         while "[MASK]" in corrected_sentence and iters < max_iters:
             try:
@@ -140,6 +144,21 @@ class TextCorrectionTool:
                     cand = {**cand, "matched_term": info["matched_term"], "flag": info["flag"]}
                     if info["flag"]:
                         valid_candidates.append(cand)
+
+                # 记录分支
+                branch = "Precision" if valid_candidates else "General"
+                if legal_only:
+                    branch = "Precision"
+                branch_history.append(branch)
+
+                # 强制精确分支且没有合法候选，则直接回填原字符
+                if legal_only and not valid_candidates:
+                    if debug:
+                        predictions_list.append([])
+                    matched_terms.append(None)
+                    corrected_sentence = corrected_sentence.replace("[MASK]", target_char, 1)
+                    iters += 1
+                    continue
 
                 # 若没有合法候选，则退回原始候选列表
                 source_for_score = valid_candidates if valid_candidates else candidate_list
@@ -163,14 +182,14 @@ class TextCorrectionTool:
                 break
             iters += 1
         if debug:
-            return corrected_sentence, predictions_list, matched_terms
+            return corrected_sentence, predictions_list, matched_terms, branch_history
         else:
-            return corrected_sentence, matched_terms
+            return corrected_sentence, matched_terms, branch_history
 
     ################################################################################
     # 4. 对外暴露的核心接口
     ################################################################################
-    def correct_text(self, sentence, alpha=None, beta=None, gamma=None):
+    def correct_text(self, sentence, alpha=None, beta=None, gamma=None, legal_only=False):
         """
         综合接口：先对输入句子进行错误检测 → 生成 masked 文本 → 迭代纠错，
         返回最终纠错后的句子。
@@ -181,9 +200,10 @@ class TextCorrectionTool:
 
         pred_labels = self.detect_errors_in_sentence(sentence)
         masked_text = self.create_masked_text_from_predictions(sentence, pred_labels)
-        corrected_sentence, _ = self.iterative_correction(
+        corrected_sentence, _, _ = self.iterative_correction(
             masked_text, sentence,
             alpha=alpha, beta=beta, gamma=gamma,
-            debug=False
+            debug=False,
+            legal_only=legal_only
         )
         return corrected_sentence
