@@ -165,8 +165,8 @@ tab_single, tab_batch = st.tabs(["单句纠错", "批量纠错"])
 # 4. 单句纠错
 # ===============================
 with tab_single:
-    default_text = st.session_state.pop('input_text', '')
-    input_text = st.text_area("请输入待纠错的中文句子：", value=default_text, height=120)
+    default_text = st.session_state.get('input_text', '')
+    input_text = st.text_area("请输入待纠错的中文句子：", key="input_text", value=default_text, height=120)
     if st.button("开始纠错", key="single_correct"):
         if not input_text.strip():
             st.warning("请输入文本内容。")
