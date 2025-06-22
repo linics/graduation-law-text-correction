@@ -39,6 +39,6 @@ if st.button("退出登录"):
     log_action(st.session_state.get('user',''), 'logout', '')
     st.session_state['user'] = None
     st.session_state['role'] = None
-    st.switch_page("app.py")
+    st.switch_page("首页.py")
 
 log_action(st.session_state.get('user',''), 'view_settings', '')

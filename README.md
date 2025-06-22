@@ -21,7 +21,7 @@
    ```
 3. 启动演示界面：
    ```bash
-   streamlit run app.py
+   streamlit run 首页.py
    ```
 
 ## 模型训练

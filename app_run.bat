@@ -8,6 +8,6 @@ if errorlevel 1 (
     exit
 )
 echo Starting Streamlit app...
-python -m streamlit run app.py
+python -m streamlit run 首页.py
 echo Streamlit exited. Press any key to close...
 pause

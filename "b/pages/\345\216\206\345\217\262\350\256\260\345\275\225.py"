@@ -26,4 +26,4 @@ st.dataframe(df)
 
 if st.button("加载到主页面") and not df.empty:
     st.session_state['input_text'] = df.loc[selected, 'raw_text']
-    st.switch_page("app.py")
+    st.switch_page("首页.py")
