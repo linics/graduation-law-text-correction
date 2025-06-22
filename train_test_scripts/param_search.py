@@ -2,7 +2,7 @@ import json
 import itertools
 import time
 import Levenshtein
-from the_graduation_design.text_correction_tool import TextCorrectionTool
+from text_correction_tool import TextCorrectionTool
 
 def load_validation_data(file_path):
     data = []
