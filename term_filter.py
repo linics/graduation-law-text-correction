@@ -6,7 +6,8 @@ import csv
 from typing import List, Dict, Optional
 
 # —— 配置区 —— #
-BASE_DIR    = os.path.dirname(os.path.dirname(__file__))  # project 根目录
+# 本项目的根目录即为当前文件所在目录
+BASE_DIR    = os.path.dirname(__file__)
 DATA_DIR    = os.path.join(BASE_DIR, "dataset")
 DICT_CSV    = os.path.join(DATA_DIR, "THUOCL_law_pruned.csv")
 # —— end 配置 —— #
