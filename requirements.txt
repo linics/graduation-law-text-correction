@@ -7,3 +7,4 @@ datasets
 cnradical
 sklearn
 pandas
+passlib
