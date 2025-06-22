@@ -21,7 +21,14 @@ from auth_utils import (
     count_logs,
     export_all_logs,
 )
-# <<<
+
+def rerun():
+    """兼容不同版本的 Streamlit 重新运行函数"""
+    if hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+    elif hasattr(st, "rerun"):
+        st.rerun()
+
 
 
 # ===============================
@@ -111,7 +118,8 @@ if st.session_state["user"] is None:
                 st.session_state["user"] = lu
                 st.session_state["role"] = role
                 insert_log(lu, "login", "")
-                st.experimental_rerun()
+                rerun()
+
             else:
                 st.error("用户名或密码错误")
     with tab_register:
@@ -137,7 +145,8 @@ if st.sidebar.button("退出登录"):
     insert_log(st.session_state['user'], 'logout', '')
     st.session_state['user'] = None
     st.session_state['role'] = None
-    st.experimental_rerun()
+    rerun()
+
 
 cfg = load_config()
 # 在侧边栏放置纠错参数
