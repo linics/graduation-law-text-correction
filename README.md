@@ -112,3 +112,16 @@ print(res)
 - 本 README 旨在说明项目结构、使用方式及实验对比。
 - 本项目已同步至 GitHub 仓库: https://github.com/linics/graduation-law-text-correction
 
+## 十一、运行与数据库初始化
+```bash
+pip install -r requirements.txt
+python migrations/001_initial.py  # 初始化数据库
+streamlit run app.py
+```
+
+若出现依赖安装失败，请确认已离线下载所需 whl 包，并通过 `pip install <file>` 方式安装。
+
+## 常见问题
+- **模型加载慢**：首次运行需从本地或预训练权重加载，可预先下载至本地。
+- **无法写入数据库**：检查 `app.db` 是否有写权限。
+
