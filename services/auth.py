@@ -41,9 +41,11 @@ def verify(username: str, password: str) -> tuple[bool, str]:
         return False, ""
 
 
-def log_action(user: str, action: str, payload: str = ""):
+def log_action(user: str | None, action: str, payload: str = ""):
+    """记录用户操作日志，如果 user 为空则记为 anonymous"""
+    username = user or "anonymous"
     with get_session() as session:
-        session.add(Log(user=user, action=action, payload=payload))
+        session.add(Log(user=username, action=action, payload=payload))
         session.commit()
 
 
