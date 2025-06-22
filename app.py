@@ -140,12 +140,16 @@ if st.sidebar.button("退出登录"):
     rerun()
 
 
-cfg = {k: float(v) for k, v in get_all().items() if k in {'alpha','beta','gamma'}}
+# 默认权重设置
+cfg = get_all()
+alpha_init = float(cfg.get('alpha', 0.4))
+beta_init = float(cfg.get('beta', 0.4))
+gamma_init = float(cfg.get('gamma', 0.1))
 # 在侧边栏放置纠错参数
 st.sidebar.header("纠错参数设置")
-alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, cfg['alpha'], 0.05)
-beta  = st.sidebar.slider("Beta (拼音相似度权重)", 0.0, 1.0, cfg['beta'], 0.05)
-gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, cfg['gamma'], 0.05)
+alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, alpha_init, 0.05)
+beta  = st.sidebar.slider("Beta (拼音相似度权重)", 0.0, 1.0, beta_init, 0.05)
+gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, gamma_init, 0.05)
 legal_only = st.sidebar.checkbox("仅限法律术语", value=False)
 debug_mode = st.sidebar.checkbox("显示候选词细节", value=False)
 if st.sidebar.button("保存参数"):

@@ -1,6 +1,7 @@
 from difflib import ndiff
 import json
 from sqlmodel import select
+from sqlalchemy import func
 from models import Correction
 from .db import get_session
 
@@ -29,5 +30,5 @@ def load_history(username: str | None, start: str | None, end: str | None, offse
             stmt = stmt.where(Correction.ts <= end)
         stmt = stmt.order_by(Correction.ts.desc()).offset(offset).limit(limit)
         rows = session.exec(stmt).all()
-        total = session.exec(select(Correction).count()).one()
+        total = session.exec(select(func.count()).select_from(Correction)).one()
         return rows, total
