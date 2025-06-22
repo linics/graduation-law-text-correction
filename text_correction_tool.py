@@ -145,10 +145,10 @@ class TextCorrectionTool:
                     if info["flag"]:
                         valid_candidates.append(cand)
 
-                # 记录分支
-                branch = "Precision" if valid_candidates else "General"
+                # 记录分支，使用中文描述
+                branch = "精确" if valid_candidates else "通用"
                 if legal_only:
-                    branch = "Precision"
+                    branch = "精确"
                 branch_history.append(branch)
 
                 # 强制精确分支且没有合法候选，则直接回填原字符
