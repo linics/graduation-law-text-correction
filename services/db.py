@@ -6,6 +6,7 @@ import schedule
 import time
 from threading import Thread
 from sqlmodel import create_engine, Session, SQLModel, select
+from sqlalchemy import text
 
 from models import Correction, Log, User
 
@@ -17,7 +18,7 @@ def init_db():
     """Create tables and set WAL"""
     SQLModel.metadata.create_all(engine)
     with engine.connect() as conn:
-        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(text("PRAGMA journal_mode=WAL;"))
 
     schedule.every().day.at("03:00").do(archive_old)
     Thread(target=_run_scheduler, daemon=True).start()
