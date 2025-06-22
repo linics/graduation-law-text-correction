@@ -38,18 +38,6 @@ def highlight_diff(original, corrected):
             result.append(f"<span style='background-color:#d4f7d4;'>{replaced_new}</span>")
     return "".join(result)
 
-def highlight_terms(text, terms):
-    """在文本中将给定术语高亮显示"""
-    if not terms:
-        return text
-    unique = sorted({t for t in terms if t}, key=len, reverse=True)
-    highlighted = text
-    for term in unique:
-        highlighted = re.sub(re.escape(term),
-                             f"<span style='background-color:#fff3b0;'>{term}</span>",
-                             highlighted)
-    return highlighted
-
 def split_sentences(text):
     """
     按照 。！？ 进行分句，返回一个句子列表。
@@ -118,9 +106,9 @@ with tab_single:
                     debug=debug_mode
                 )
                 if debug_mode:
-                    corrected_text, predictions_list, matched_terms = result
+                    corrected_text, predictions_list = result
                 else:
-                    corrected_text, matched_terms = result
+                    corrected_text = result
                 duration = time.time() - start_time
 
             st.subheader("纠错结果")
@@ -130,8 +118,7 @@ with tab_single:
                 st.write(input_text)
             with col2:
                 st.markdown("**纠错后文本：**")
-                highlighted = highlight_terms(corrected_text, matched_terms)
-                st.markdown(f"<div style='font-size:1.1rem;'>{highlighted}</div>", unsafe_allow_html=True)
+                st.write(corrected_text)
             st.write(f"处理时间：{duration:.2f} 秒")
 
             diff_html = highlight_diff(input_text, corrected_text)
@@ -147,11 +134,8 @@ with tab_single:
                         st.markdown(f"**第 {i+1} 次替换候选词**")
                         top5 = candidates[:5]
                         for cand in top5:
-                            token_str, combined, model_score, pinyin_sim, shape_sim, match = cand
-                            info = match if match else "无"
-                            st.write(
-                                f"- {token_str} | 综合: {combined:.3f}, 模型: {model_score:.3f}, 拼音: {pinyin_sim:.3f}, 字形: {shape_sim:.3f} | 术语: {info}"
-                            )
+                            token_str, combined, model_score, pinyin_sim, shape_sim = cand
+                            st.write(f"- {token_str} | 综合: {combined:.3f}, 模型: {model_score:.3f}, 拼音: {pinyin_sim:.3f}, 字形: {shape_sim:.3f}")
 
 # ===============================
 # 5. 批量纠错
@@ -184,14 +168,14 @@ with tab_batch:
                 for idx, sent in enumerate(sentences, start=1):
                     pred_labels = tool.detect_errors_in_sentence(sent)
                     masked_text = tool.create_masked_text_from_predictions(sent, pred_labels)
-                    corrected_line, matched_terms_line = tool.iterative_correction(
+                    corrected_line = tool.iterative_correction(
                         masked_text, sent,
                         max_iters=10,
                         alpha=alpha, beta=beta, gamma=gamma,
                         debug=False
                     )
                     dist = Levenshtein.distance(corrected_line, sent)
-                    results.append((sent, corrected_line, dist, matched_terms_line))
+                    results.append((sent, corrected_line, dist))
                     edit_dists.append(dist)
                     progress_bar.progress(idx/total)
                 progress_bar.empty()
@@ -199,12 +183,10 @@ with tab_batch:
 
                 st.subheader("批量纠错结果")
                 st.write(f"处理总句数：{len(results)}，耗时：{duration:.2f} 秒")
-                for idx, (orig, corr, dist, mterms) in enumerate(results, start=1):
+                for idx, (orig, corr, dist) in enumerate(results, start=1):
                     st.markdown(f"**句子 {idx}**")
                     diff_html = highlight_diff(orig, corr)
                     st.markdown(f"<div style='font-size:1.0rem;'>{diff_html}</div>", unsafe_allow_html=True)
-                    highlighted = highlight_terms(corr, mterms)
-                    st.markdown(f"<div style='font-size:1.0rem;margin-top:4px;'>{highlighted}</div>", unsafe_allow_html=True)
                     st.write(f"编辑距离：{dist}")
                     st.write("---")
 
