@@ -7,6 +7,7 @@ import pypinyin
 import Levenshtein
 from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
 from similarity_utils import get_all_candidate_scores
+from term_filter import load_terms, filter_candidates
 
 
 ################################################################################
@@ -40,6 +41,8 @@ class TextCorrectionTool:
         self.default_alpha = 0.4
         self.default_beta = 0.4
         self.default_gamma = 0.2
+        # 术语词表
+        self.terms = load_terms()
 
     ################################################################################
     # 2. 检测相关
@@ -101,11 +104,18 @@ class TextCorrectionTool:
 
     def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=None, beta=None, gamma=None, debug=False):
         """
-        迭代纠错：对 masked_text 不断填充 [MASK]，直到文本中不再包含 [MASK] 或达到最大迭代次数。
-        如果 debug=True，则同时返回每一步的候选词列表。
-        返回：
-          - 如果 debug 为 False，返回最终纠错后的文本；
-          - 如果 debug 为 True，返回 (corrected_sentence, predictions_list)。
+        迭代纠错：对 ``masked_text`` 不断填充 ``[MASK]``，直到文本中不再包含 ``[MASK]``
+        或达到 ``max_iters`` 次。
+
+        每次生成候选词后，会通过 ``term_filter.filter_candidates`` 校验其是否合法
+        术语，只有被标记为合法的候选才参与后续打分与替换。
+
+        如果 ``debug=True``，则返回候选词得分列表，前端可用于展示；同时暴露替换
+        时匹配到的术语，便于高亮显示。
+
+        返回值：
+          - debug=False  -> ``(corrected_sentence, matched_terms)``
+          - debug=True   -> ``(corrected_sentence, predictions_list, matched_terms)``
         """
         alpha = self.default_alpha if alpha is None else alpha
         beta = self.default_beta if beta is None else beta
@@ -113,6 +123,7 @@ class TextCorrectionTool:
 
         corrected_sentence = masked_text
         predictions_list = []  # 用于保存每次迭代的候选词及分数信息
+        matched_terms = []      # 每次替换命中的术语
         iters = 0
         while "[MASK]" in corrected_sentence and iters < max_iters:
             try:
@@ -120,20 +131,41 @@ class TextCorrectionTool:
                 candidate_list = results[0] if isinstance(results[0], list) else results
                 mask_index = corrected_sentence.index("[MASK]")
                 target_char = target_text[mask_index] if mask_index < len(target_text) else ""
-                candidates_with_scores = get_all_candidate_scores(candidate_list, target_char,
-                                                                  alpha=alpha, beta=beta, gamma=gamma)
+
+                # 候选字符串列表
+                cand_tokens = [c["token_str"] for c in candidate_list]
+                term_info = filter_candidates(cand_tokens, self.terms)
+                valid_candidates = []
+                for cand, info in zip(candidate_list, term_info):
+                    cand = {**cand, "matched_term": info["matched_term"], "flag": info["flag"]}
+                    if info["flag"]:
+                        valid_candidates.append(cand)
+
+                # 若没有合法候选，则退回原始候选列表
+                source_for_score = valid_candidates if valid_candidates else candidate_list
+                candidates_with_scores = []
+                raw_scores = get_all_candidate_scores(source_for_score, target_char,
+                                                      alpha=alpha, beta=beta, gamma=gamma)
+                for score_item, cand in zip(raw_scores, source_for_score):
+                    token, combined, model_score, pinyin_sim, shape_sim = score_item
+                    candidates_with_scores.append(
+                        (token, combined, model_score, pinyin_sim, shape_sim, cand.get("matched_term"))
+                    )
+
                 if debug:
                     predictions_list.append(candidates_with_scores)
-                top_candidate = candidates_with_scores[0][0]
+
+                top_candidate, _, _, _, _, top_match = candidates_with_scores[0]
+                matched_terms.append(top_match)
                 corrected_sentence = corrected_sentence.replace("[MASK]", top_candidate, 1)
             except Exception as e:
                 print("fill-mask 出错:", e)
                 break
             iters += 1
         if debug:
-            return corrected_sentence, predictions_list
+            return corrected_sentence, predictions_list, matched_terms
         else:
-            return corrected_sentence
+            return corrected_sentence, matched_terms
 
     ################################################################################
     # 4. 对外暴露的核心接口
@@ -149,6 +181,9 @@ class TextCorrectionTool:
 
         pred_labels = self.detect_errors_in_sentence(sentence)
         masked_text = self.create_masked_text_from_predictions(sentence, pred_labels)
-        corrected_sentence = self.iterative_correction(masked_text, sentence,
-                                                       alpha=alpha, beta=beta, gamma=gamma)
+        corrected_sentence, _ = self.iterative_correction(
+            masked_text, sentence,
+            alpha=alpha, beta=beta, gamma=gamma,
+            debug=False
+        )
         return corrected_sentence
