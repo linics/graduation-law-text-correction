@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, date
 from passlib.hash import pbkdf2_sha256
 from sqlmodel import select
+from sqlalchemy import text
 
 from .db import get_session
 from models import User, Log, KVConfig
@@ -59,7 +60,7 @@ def check_and_inc_quota(username: str) -> bool:
         day_flag = session.exec(select(KVConfig).where(KVConfig.key == "quota_day")).first()
         if not day_flag or day_flag.value != today:
             session.exec(select(User))  # open transaction
-            session.connection().execute("UPDATE user SET request_today=0")
+            session.exec(text("UPDATE user SET request_today=0"))
             if day_flag:
                 day_flag.value = today
                 session.add(day_flag)
