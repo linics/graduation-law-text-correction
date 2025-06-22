@@ -1,5 +1,5 @@
 @echo off
-cd /d "D:\deeplearning\The graduation design"
+cd /d "D:\deeplearning\the_graduation_design"
 echo Activating Conda environment...
 call conda activate gradesign
 if errorlevel 1 (
@@ -8,6 +8,6 @@ if errorlevel 1 (
     exit
 )
 echo Starting Streamlit app...
-streamlit run app.py
+python -m streamlit run app.py
 echo Streamlit exited. Press any key to close...
 pause

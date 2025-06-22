@@ -6,6 +6,8 @@ import numpy as np
 import pypinyin
 import Levenshtein
 from transformers import AutoTokenizer, AutoModelForTokenClassification, pipeline
+from similarity_utils import get_all_candidate_scores
+
 
 ################################################################################
 # 1. 全局加载或初始化
@@ -26,14 +28,18 @@ class TextCorrectionTool:
             detection_model_id,
             num_labels=2
         )
-        if device == "cuda":
+        if device == "cuda" and torch.cuda.is_available():
             self.detection_model.to("cuda")
-        self.detection_model.eval()
+        else:
+            self.detection_model.to("cpu")
 
         # 加载纠错模型
         self.correction_tokenizer = AutoTokenizer.from_pretrained(correction_model_id)
         self.corrector = pipeline("fill-mask", model=correction_model_id, tokenizer=self.correction_tokenizer,
                                   device=0 if device == "cuda" else -1)
+        self.default_alpha = 0.4
+        self.default_beta = 0.4
+        self.default_gamma = 0.2
 
     ################################################################################
     # 2. 检测相关
@@ -92,47 +98,8 @@ class TextCorrectionTool:
     ################################################################################
     # 3. 纠错相关
     ################################################################################
-    def get_pinyin(self, text):
-        """将文本转换为拼音字符串"""
-        return "".join(pypinyin.lazy_pinyin(text))
 
-    def compute_pinyin_similarity(self, candidate, target):
-        """
-        计算候选词与目标词的拼音相似度：
-        如果拼音完全一致返回 1.0，否则根据编辑距离归一化相似度。
-        """
-        cand_pinyin = self.get_pinyin(candidate)
-        target_pinyin = self.get_pinyin(target)
-        if cand_pinyin == target_pinyin:
-            return 1.0
-        max_len = max(len(cand_pinyin), len(target_pinyin))
-        sim = 1 - Levenshtein.distance(cand_pinyin, target_pinyin) / max_len
-        return sim
-
-    def compute_shape_similarity(self, candidate, target):
-        """
-        简单示例：若候选词与目标词完全一致返回 1.0，否则返回 0.5。
-        """
-        return 1.0 if candidate == target else 0.5
-
-    def get_all_candidate_scores(self, candidate_list, target, alpha=0.7, beta=0.3, gamma=0.3):
-        """
-        对候选列表计算综合得分：
-          综合得分 = alpha * 模型得分 + beta * 拼音相似度 + gamma * 字形相似度。
-        返回排序后的候选列表，每个元素为一个元组：
-        (候选词, 综合得分, 模型得分, 拼音相似度, 字形相似度)
-        """
-        results = []
-        for cand in candidate_list:
-            model_score = cand["score"]
-            pinyin_sim = self.compute_pinyin_similarity(cand["token_str"], target)
-            shape_sim = self.compute_shape_similarity(cand["token_str"], target)
-            combined = alpha * model_score + beta * pinyin_sim + gamma * shape_sim
-            results.append((cand["token_str"], combined, model_score, pinyin_sim, shape_sim))
-        results.sort(key=lambda x: x[1], reverse=True)
-        return results
-
-    def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=0.7, beta=0.3, gamma=0.3, debug=False):
+    def iterative_correction(self, masked_text, target_text, max_iters=10, alpha=None, beta=None, gamma=None, debug=False):
         """
         迭代纠错：对 masked_text 不断填充 [MASK]，直到文本中不再包含 [MASK] 或达到最大迭代次数。
         如果 debug=True，则同时返回每一步的候选词列表。
@@ -140,6 +107,10 @@ class TextCorrectionTool:
           - 如果 debug 为 False，返回最终纠错后的文本；
           - 如果 debug 为 True，返回 (corrected_sentence, predictions_list)。
         """
+        alpha = self.default_alpha if alpha is None else alpha
+        beta = self.default_beta if beta is None else beta
+        gamma = self.default_gamma if gamma is None else gamma
+
         corrected_sentence = masked_text
         predictions_list = []  # 用于保存每次迭代的候选词及分数信息
         iters = 0
@@ -149,8 +120,8 @@ class TextCorrectionTool:
                 candidate_list = results[0] if isinstance(results[0], list) else results
                 mask_index = corrected_sentence.index("[MASK]")
                 target_char = target_text[mask_index] if mask_index < len(target_text) else ""
-                candidates_with_scores = self.get_all_candidate_scores(candidate_list, target_char,
-                                                                       alpha=alpha, beta=beta, gamma=gamma)
+                candidates_with_scores = get_all_candidate_scores(candidate_list, target_char,
+                                                                  alpha=alpha, beta=beta, gamma=gamma)
                 if debug:
                     predictions_list.append(candidates_with_scores)
                 top_candidate = candidates_with_scores[0][0]
@@ -167,11 +138,15 @@ class TextCorrectionTool:
     ################################################################################
     # 4. 对外暴露的核心接口
     ################################################################################
-    def correct_text(self, sentence, alpha=0.7, beta=0.3, gamma=0.3):
+    def correct_text(self, sentence, alpha=None, beta=None, gamma=None):
         """
         综合接口：先对输入句子进行错误检测 → 生成 masked 文本 → 迭代纠错，
         返回最终纠错后的句子。
         """
+        alpha = self.default_alpha if alpha is None else alpha
+        beta = self.default_beta if beta is None else beta
+        gamma = self.default_gamma if gamma is None else gamma
+
         pred_labels = self.detect_errors_in_sentence(sentence)
         masked_text = self.create_masked_text_from_predictions(sentence, pred_labels)
         corrected_sentence = self.iterative_correction(masked_text, sentence,

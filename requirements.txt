@@ -3,3 +3,7 @@ transformers
 torch
 pypinyin
 python-Levenshtein
+datasets
+cnradical
+sklearn
+pandas
