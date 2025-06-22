@@ -90,6 +90,7 @@ st.sidebar.header("纠错参数设置")
 alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, 0.4, 0.05)
 beta  = st.sidebar.slider("Beta (拼音相似度权重)", 0.0, 1.0, 0.4, 0.05)
 gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, 0.1, 0.05)
+legal_only = st.sidebar.checkbox("仅限法律术语", value=False)
 debug_mode = st.sidebar.checkbox("显示候选词细节", value=False)
 st.sidebar.info("调节纠错时模型得分、拼音相似度、字形相似度的权重；\n勾选 '显示候选词细节' 以查看每次迭代替换时的候选词。")
 
@@ -115,12 +116,13 @@ with tab_single:
                     masked_text, input_text,
                     max_iters=10,
                     alpha=alpha, beta=beta, gamma=gamma,
-                    debug=debug_mode
+                    debug=debug_mode,
+                    legal_only=legal_only
                 )
                 if debug_mode:
-                    corrected_text, predictions_list, matched_terms = result
+                    corrected_text, predictions_list, matched_terms, branch_history = result
                 else:
-                    corrected_text, matched_terms = result
+                    corrected_text, matched_terms, branch_history = result
                 duration = time.time() - start_time
 
             st.subheader("纠错结果")
@@ -140,11 +142,13 @@ with tab_single:
 
             edit_dist = Levenshtein.distance(corrected_text, input_text)
             st.write(f"**编辑距离：** {edit_dist}")
+            branch_str = " -> ".join(branch_history)
+            st.write(f"**分支序列：** {branch_str}")
 
             if debug_mode:
                 with st.expander("查看候选词细节"):
-                    for i, candidates in enumerate(predictions_list):
-                        st.markdown(f"**第 {i+1} 次替换候选词**")
+                    for i, (candidates, br) in enumerate(zip(predictions_list, branch_history)):
+                        st.markdown(f"**第 {i+1} 次替换候选词 ({br})**")
                         top5 = candidates[:5]
                         for cand in top5:
                             token_str, combined, model_score, pinyin_sim, shape_sim, match = cand
@@ -184,14 +188,15 @@ with tab_batch:
                 for idx, sent in enumerate(sentences, start=1):
                     pred_labels = tool.detect_errors_in_sentence(sent)
                     masked_text = tool.create_masked_text_from_predictions(sent, pred_labels)
-                    corrected_line, matched_terms_line = tool.iterative_correction(
+                    corrected_line, matched_terms_line, branch_hist_line = tool.iterative_correction(
                         masked_text, sent,
                         max_iters=10,
                         alpha=alpha, beta=beta, gamma=gamma,
-                        debug=False
+                        debug=False,
+                        legal_only=legal_only
                     )
                     dist = Levenshtein.distance(corrected_line, sent)
-                    results.append((sent, corrected_line, dist, matched_terms_line))
+                    results.append((sent, corrected_line, dist, matched_terms_line, branch_hist_line))
                     edit_dists.append(dist)
                     progress_bar.progress(idx/total)
                 progress_bar.empty()
@@ -199,13 +204,15 @@ with tab_batch:
 
                 st.subheader("批量纠错结果")
                 st.write(f"处理总句数：{len(results)}，耗时：{duration:.2f} 秒")
-                for idx, (orig, corr, dist, mterms) in enumerate(results, start=1):
+                for idx, (orig, corr, dist, mterms, branches) in enumerate(results, start=1):
                     st.markdown(f"**句子 {idx}**")
                     diff_html = highlight_diff(orig, corr)
                     st.markdown(f"<div style='font-size:1.0rem;'>{diff_html}</div>", unsafe_allow_html=True)
                     highlighted = highlight_terms(corr, mterms)
                     st.markdown(f"<div style='font-size:1.0rem;margin-top:4px;'>{highlighted}</div>", unsafe_allow_html=True)
                     st.write(f"编辑距离：{dist}")
+                    branch_str = " -> ".join(branches)
+                    st.write(f"分支序列：{branch_str}")
                     st.write("---")
 
                 # 绘制编辑距离直方图
