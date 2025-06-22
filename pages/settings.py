@@ -7,7 +7,20 @@ st.title("系统设置")
 
 cfg = get_all()
 
+legal_only_default = cfg.get('legal_only', 'False') == 'True'
+debug_default = cfg.get('debug_mode', 'False') == 'True'
+
+legal_only = st.checkbox("仅限法律术语", value=legal_only_default)
+debug_mode = st.checkbox("显示候选词细节", value=debug_default)
+
+if st.button("保存设置"):
+    save('legal_only', str(legal_only))
+    save('debug_mode', str(debug_mode))
+    st.toast("已保存")
+
 for k, v in cfg.items():
+    if k in {'legal_only', 'debug_mode'}:
+        continue
     try:
         num_v = float(v)
     except ValueError:
@@ -21,5 +34,11 @@ for k, v in cfg.items():
             st.toast("已保存")
     else:
         st.number_input(k, value=num_v, disabled=True)
+
+if st.button("退出登录"):
+    log_action(st.session_state.get('user',''), 'logout', '')
+    st.session_state['user'] = None
+    st.session_state['role'] = None
+    st.switch_page("app.py")
 
 log_action(st.session_state.get('user',''), 'view_settings', '')
