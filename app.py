@@ -9,6 +9,19 @@ import pandas as pd
 import time
 
 from text_correction_tool import TextCorrectionTool
+# >>> 新增导入
+from auth_utils import (
+    init_db,
+    register,
+    verify,
+    insert_log,
+    load_config,
+    save_config,
+    get_logs,
+    count_logs,
+    export_all_logs,
+)
+# <<<
 
 
 # ===============================
@@ -77,7 +90,40 @@ def load_tool():
 # 在脚本最前面调用 set_page_config
 st.set_page_config(page_title="中文文本纠错系统", layout="wide")
 
+# >>> 初始化数据库和会话
+init_db()
+if "user" not in st.session_state:
+    st.session_state["user"] = None
+    st.session_state["role"] = None
+# <<<
+
 tool = load_tool()
+
+# >>> 登录与注册界面
+if st.session_state["user"] is None:
+    tab_login, tab_register = st.tabs(["登录", "注册"])
+    with tab_login:
+        lu = st.text_input("用户名")
+        lp = st.text_input("密码", type="password")
+        if st.button("登录"):
+            ok, role = verify(lu, lp)
+            if ok:
+                st.session_state["user"] = lu
+                st.session_state["role"] = role
+                insert_log(lu, "login", "")
+                st.experimental_rerun()
+            else:
+                st.error("用户名或密码错误")
+    with tab_register:
+        ru = st.text_input("新用户名", key="ru")
+        rp = st.text_input("新密码", type="password", key="rp")
+        if st.button("注册"):
+            if register(ru, rp):
+                st.success("注册成功，请登录")
+            else:
+                st.error("用户已存在")
+    st.stop()
+# <<<
 
 # ===============================
 # 3. 页面布局
@@ -85,16 +131,32 @@ tool = load_tool()
 st.title("中文法律文本纠错系统")
 st.write("本系统基于错误检测与纠错模型，实现了文本纠错功能。支持单句与批量文本处理。")
 
+# >>> 显示用户信息与加载配置
+st.sidebar.markdown(f"**用户:** {st.session_state['user']} ({st.session_state['role']})")
+if st.sidebar.button("退出登录"):
+    insert_log(st.session_state['user'], 'logout', '')
+    st.session_state['user'] = None
+    st.session_state['role'] = None
+    st.experimental_rerun()
+
+cfg = load_config()
 # 在侧边栏放置纠错参数
 st.sidebar.header("纠错参数设置")
-alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, 0.4, 0.05)
-beta  = st.sidebar.slider("Beta (拼音相似度权重)", 0.0, 1.0, 0.4, 0.05)
-gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, 0.1, 0.05)
+alpha = st.sidebar.slider("Alpha (模型得分权重)", 0.0, 1.0, cfg['alpha'], 0.05)
+beta  = st.sidebar.slider("Beta (拼音相似度权重)", 0.0, 1.0, cfg['beta'], 0.05)
+gamma = st.sidebar.slider("Gamma (字形相似度权重)", 0.0, 1.0, cfg['gamma'], 0.05)
 legal_only = st.sidebar.checkbox("仅限法律术语", value=False)
 debug_mode = st.sidebar.checkbox("显示候选词细节", value=False)
+if st.sidebar.button("保存参数"):
+    save_config(alpha, beta, gamma)
+    st.sidebar.success("已保存")
 st.sidebar.info("调节纠错时模型得分、拼音相似度、字形相似度的权重；\n勾选 '显示候选词细节' 以查看每次迭代替换时的候选词。")
 
-tab_single, tab_batch = st.tabs(["单句纠错", "批量纠错"])
+if st.session_state["role"] == "admin":
+    tab_single, tab_batch, tab_logs = st.tabs(["单句纠错", "批量纠错", "日志管理"])
+else:
+    tab_single, tab_batch = st.tabs(["单句纠错", "批量纠错"])
+    tab_logs = None
 
 # ===============================
 # 4. 单句纠错
@@ -125,6 +187,7 @@ with tab_single:
                     corrected_text, matched_terms, branch_history = result
                 duration = time.time() - start_time
 
+            insert_log(st.session_state['user'], 'single_correct', input_text)
             st.subheader("纠错结果")
             col1, col2 = st.columns(2)
             with col1:
@@ -201,6 +264,7 @@ with tab_batch:
                     progress_bar.progress(idx/total)
                 progress_bar.empty()
                 duration = time.time() - start_time
+                insert_log(st.session_state['user'], 'batch_correct', str(len(sentences)))
 
                 st.subheader("批量纠错结果")
                 st.write(f"处理总句数：{len(results)}，耗时：{duration:.2f} 秒")
@@ -224,4 +288,23 @@ with tab_batch:
                 ax.set_xlabel("编辑距离")
                 ax.set_ylabel("句子数量")
                 st.pyplot(fig, use_container_width=False)
+
+# >>> 日志管理页面
+if tab_logs:
+    st.subheader("操作日志")
+    total = count_logs()
+    page_size = 20
+    page = st.number_input("页码", min_value=1, value=1, step=1)
+    offset = (page - 1) * page_size
+    logs = get_logs(offset, page_size)
+    df = pd.DataFrame(logs, columns=["id", "user", "action", "payload", "timestamp"])
+    st.dataframe(df)
+    csv_page = df.to_csv(index=False).encode("utf-8")
+    st.download_button("导出当前页", csv_page, "logs_page.csv", "text/csv")
+    all_logs = export_all_logs()
+    df_all = pd.DataFrame(all_logs, columns=["id", "user", "action", "payload", "timestamp"])
+    csv_all = df_all.to_csv(index=False).encode("utf-8")
+    st.download_button("导出全部", csv_all, "logs_all.csv", "text/csv")
+    st.write(f"总记录数: {total}")
+# <<<
 
